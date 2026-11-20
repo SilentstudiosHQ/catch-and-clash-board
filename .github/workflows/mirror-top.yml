@@ -1,0 +1,45 @@
+# Catch and Clash: copies the global Top Rangers list from Supabase to this repo every 10 minutes.
+# GitHub Pages serves it at https://silentstudioshq.github.io/catch-and-clash-board/top.txt, an address VRChat trusts,
+# so every player can read the list (Supabase itself needs "Allow Untrusted URLs").
+# Put this file at .github/workflows/mirror-top.yml in a PUBLIC repo with Pages turned on (branch main, folder / root).
+name: Mirror Top Rangers
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: mirror-top
+  cancel-in-progress: true
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch the list
+        run: |
+          curl -fsS --max-time 30 "https://cdxvrluuwacfuuvmvcej.supabase.co/functions/v1/cc?top" -o top.new
+          head -c 3 top.new | grep -q "cc1"
+          # the first line carries the time, so compare the Rangers only: commit when they changed
+          # (and once a day anyway, so GitHub keeps the schedule alive)
+          tail -n +2 top.new > body.new
+          if [ -f top.txt ]; then tail -n +2 top.txt > body.old; else : > body.old; fi
+          date -u +%F > day.new
+          if cmp -s body.new body.old && [ -f .day ] && cmp -s day.new .day; then
+            echo "CHANGED=0" >> "$GITHUB_ENV"
+          else
+            mv top.new top.txt
+            mv day.new .day
+            echo "CHANGED=1" >> "$GITHUB_ENV"
+          fi
+          rm -f top.new body.new body.old day.new
+      - name: Commit
+        if: env.CHANGED == '1'
+        run: |
+          touch .nojekyll
+          git config user.name "top-rangers-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add top.txt .day .nojekyll
+          git commit -m "Top Rangers update"
+          git push
